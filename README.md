@@ -1,4 +1,15 @@
+
+
+
 # Data Science Challenge
+
+
+**solution:** 
+- [notebook](./solution/notebook.ipynb)
+- [report](./solution/report.pdf)
+
+
+## Introduction
 
 Welcome to the HAMS Data Science Challenge! With this challenge we want to test your ability to build advanced probabilistic data models and to interpret their results.
 
