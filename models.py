@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import arviz as az
+import pytensor.tensor.conv as ptconv
 
 CHANNEL_PRIORS = {
     "spend_channel_1": 0.05,
@@ -38,12 +39,24 @@ def black_friday(x, coef, offset=13):
 def _delayed_adstock(alpha, theta, L):
     return alpha**((np.ones(L).cumsum()-1)-theta)**2
 
-def _apply_delayed_adstock(spend_data, weights):
+def _apply_delayed_adstock(data, weights):
     # Ensure weights sum to 1
     weights /= weights.sum()
     # Calculate the weighted sum using convolution
-    adstocked_spend = np.convolve(spend_data, weights[::-1], mode='full')[:len(spend_data)]
+    adstocked_spend = np.convolve(data, weights[::-1], mode='full')[:len(data)]
+    
     return adstocked_spend
+
+def _apply_delayed_adstock_tensor(data, weights):
+    weights = weights[::-1]
+    n_data = data.shape[0]
+    n_weights = weights.shape[0]
+    data = data.reshape((1, 1, 1, n_data) ) # Reshape for conv2d
+    weights = weights.reshape((1, 1, 1, n_weights))  # Reshape for conv2d
+    res = ptconv.conv2d(data, weights, border_mode='full')
+    res = res.reshape((n_data + (n_weights - 1),))
+    res = res[:n_data]
+    return res
 
 def model_trend(media):
     channel_priors = CHANNEL_PRIORS
@@ -53,14 +66,15 @@ def model_trend(media):
         media_contributions = []
         for channel ,channel_prior in channel_priors.items():
              # define coefficient
+            media_channel = pt.as_tensor_variable(media[channel])
             alpha = pm.Uniform(f"alpha_{channel}", lower=0.3, upper=0.9)
             # L = pm.DiscreteUniform(f"L_{channel}", lower=2, upper=6)
             L = 5
             theta = pm.DiscreteUniform(f"theta_{channel}", lower=0, upper=L)
             weights = pm.Deterministic(f'weights_{channel}',alpha ** ((pt.arange(L)) - theta) ** 2)
-            media = pt.as_tensor_variable(media[channel])
-            media_transformed = pm.Deterministic(f'media_transformed_{channel}', pm.math.conv2d(media[None, :], weights[::-1][None, :], border_mode='full')[0, :len(media)])
-            media_channel = mean_normalize(media_transformed)
+            media_channel = pm.Deterministic(f'media_transformed_{channel}', _apply_delayed_adstock_tensor(media_channel, weights))
+            
+            media_channel = mean_normalize(media_channel)
 
 
             media_channel = pt.as_tensor_variable(media_channel)
