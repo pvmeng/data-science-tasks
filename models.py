@@ -1,9 +1,7 @@
 import pymc as pm
 import pytensor.tensor as pt
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
-import arviz as az
 import pytensor.tensor.conv as ptconv
 
 CHANNEL_PRIORS = {
@@ -29,24 +27,6 @@ def cyclic_component(t, a0,a1,b1,period=20):
 def mean_normalize(data):
     return data / data.mean()
 
-def black_friday(x, coef, offset=13):
-    res = np.zeros(len(x))
-    for i in range(len(x)):
-        if i % 52 == offset:
-            res[i] = coef * x[i]
-    return res
-
-def _delayed_adstock(alpha, theta, L):
-    return alpha**((np.ones(L).cumsum()-1)-theta)**2
-
-def _apply_delayed_adstock(data, weights):
-    # Ensure weights sum to 1
-    weights /= weights.sum()
-    # Calculate the weighted sum using convolution
-    adstocked_spend = np.convolve(data, weights[::-1], mode='full')[:len(data)]
-    
-    return adstocked_spend
-
 def _apply_delayed_adstock_tensor(data, weights):
     weights = weights[::-1]
     n_data = data.shape[0]
@@ -58,27 +38,51 @@ def _apply_delayed_adstock_tensor(data, weights):
     res = res[:n_data]
     return res
 
-def model_trend(media):
-    channel_priors = CHANNEL_PRIORS
+def black_friday(n, offset=13, period=52):
+    res = np.zeros(n)
+    for i in range(n):
+        if i % period == offset:
+            res[i] = 1
+    return res
+
+
+def create_baseline_mmm(media, channel_priors = CHANNEL_PRIORS):
+    with pm.Model() as baseline_mmm:
+        target = mean_normalize(media['revenue'])
+        media_contributions = []
+        for channel ,channel_prior in channel_priors.items():
+             # define coefficient
+            media_channel = pt.as_tensor_variable(media[channel])
+            media_channel = mean_normalize(media_channel)
+            scaled_channel = scale(media_channel, target)
+            channel_coefficient = pm.TruncatedNormal(f"coefficient_{channel}", mu=channel_prior, sigma=0.1, lower=0, upper=0.5)
+            channel_contribution = pm.Deterministic(f"contribution_{channel}", channel_coefficient * scaled_channel)
+            media_contributions.append(channel_contribution)
+
+        sigma = pm.Uniform("sigma", lower=0, upper=0.5)
+
+        revenue = pm.Normal("revenue",
+                    mu = sum(media_contributions),
+                    sigma = sigma,
+                    observed=target)
+    
+    return baseline_mmm
+
+def create_mmm(media, channel_priors = CHANNEL_PRIORS):
     with pm.Model() as mmm:
-        # target = media['revenue'] / media['revenue'].mean()
         target = mean_normalize(media['revenue'])
         media_contributions = []
         for channel ,channel_prior in channel_priors.items():
              # define coefficient
             media_channel = pt.as_tensor_variable(media[channel])
             alpha = pm.Uniform(f"alpha_{channel}", lower=0.3, upper=0.9)
-            # L = pm.DiscreteUniform(f"L_{channel}", lower=2, upper=6)
-            L = 5
-            theta = pm.DiscreteUniform(f"theta_{channel}", lower=0, upper=L)
+            L = 5 # fixed length
+            theta = pm.DiscreteUniform(f"theta_{channel}", lower=0, upper=L-1)
             weights = pm.Deterministic(f'weights_{channel}',alpha ** ((pt.arange(L)) - theta) ** 2)
-            media_channel = pm.Deterministic(f'media_transformed_{channel}', _apply_delayed_adstock_tensor(media_channel, weights))
+            media_transformed_channel = pm.Deterministic(f'media_transformed_{channel}', _apply_delayed_adstock_tensor(media_channel, weights))
             
-            media_channel = mean_normalize(media_channel)
-
-
-            media_channel = pt.as_tensor_variable(media_channel)
-            scaled_channel = scale(media_channel, target) # Is this actually necessary?
+            media_transformed_channel = mean_normalize(media_transformed_channel)
+            scaled_channel = scale(media_transformed_channel, target) # Is this actually necessary?
             channel_coefficient = pm.TruncatedNormal(f"coefficient_{channel}", mu=channel_prior, sigma=0.1, lower=0, upper=0.5)
             channel_contribution = pm.Deterministic(f"contribution_{channel}", channel_coefficient * scaled_channel)
             media_contributions.append(channel_contribution)
@@ -87,15 +91,16 @@ def model_trend(media):
         mean = target.mean()
         t = np.arange(len(target))
         t0 = t[len(target) // 2]
-        capacity_coeff = pm.Normal("capacity_coef",mu=1.6, sigma=0.2)
+        capacity_coeff = pm.Normal("capacity_coef",mu=1.2, sigma=0.3)
         capacity = mean * capacity_coeff
         growth_rate = pm.TruncatedNormal("growth_rate", mu=-0.02, sigma=0.1, lower=-0.15, upper=0.0)
         trend = logistic_curve(t, capacity, growth_rate, t0)
 
         # cyclic year component
+
+        cos_ceof = pm.Normal("cos_coef", mu=-1, sigma=0.3)
+        sin_coef = pm.Normal("sin_coef", mu=2, sigma=0.3)
         BASE = 0
-        cos_ceof = pm.Normal("cos_coef", mu=0, sigma=0.5)
-        sin_coef = pm.Normal("sin_coef", mu=5.0, sigma=1)
         period=52
         year = cyclic_component(t, BASE,cos_ceof,sin_coef,period=period)
 
@@ -104,118 +109,35 @@ def model_trend(media):
         
 
         trend_year = pm.Deterministic("trend_year", trend + year)
-        bf = black_friday(t, 0.01)
-        trend_year += bf
+
+        n = len(target)
+        bf_index = black_friday(n)
+        bf_coef = pm.Normal("black_friday_coef", mu=1, sigma=0.2)
+        bf_contrib = pm.Deterministic("black_friday_contribution",bf_index*bf_coef*trend_year)
+        trend_year += bf_contrib
 
 
         sigma = pm.Uniform("sigma", lower=0, upper=0.5)
 
-        revenue = pm.Normal("revenue",                               
-                                    mu = trend_year  + sum(media_contributions),
-                                    sigma = sigma,
-                                    observed=target)
+        revenue = pm.Normal("revenue",
+                    mu = trend_year  + sum(media_contributions),
+                    sigma = sigma,
+                    observed=target)
         
     return mmm
 
 
-
-def shift_numpy_array(arr, lag):
-    if lag <= 0:
-        return arr
-    # Create an array of zeros with length `lag`
-
-    lag_fill = np.full(lag, np.mean(arr[:lag])*0.5)
-    # Concatenate the lag zeros with the truncated original array
-    shifted_arr = np.concatenate((lag_fill, arr[:-lag]))
-    
-    return shifted_arr
-
-# geometric decay
-def adstock_shifted(series, decay_rate, retention_length, shift, linear_shift=True):
-    result = np.zeros(len(series))
-    if linear_shift:
-        series = shift_numpy_array(series, shift)
-    for i in range(1, len(series)):
-
-        retention_values = np.array([series[j] for j in range(max(1, i - retention_length+1), i+1)])
-        if linear_shift:
-            retention_weights = np.array([decay_rate**i for i in range(min(i, retention_length))])[::-1]
-        else:
-            retention_weights = np.array([decay_rate**((i-shift)**2) for i in range(min(i, retention_length))])[::-1]
-        result[i] = np.sum(retention_values * retention_weights)
-    return result
-
-def delay(media, lag=5, retention_rate=0.8, retention_length=4, linear_shift=True):
-    media_transformed = media.copy()
-    for channel in CHANNEL_PRIORS.keys():
-        media_transformed[channel] = adstock_shifted(media[channel], retention_rate, retention_length, lag, linear_shift=linear_shift)
-    return media_transformed
-
-def _delayed_adstock(alpha, theta, L):
-    return alpha**((np.ones(L).cumsum()-1)-theta)**2
-
-def _apply_delayed_adstock(spend_data, weights):
-    # Ensure weights sum to 1
-    weights /= weights.sum()
-    # Calculate the weighted sum using convolution
-    adstocked_spend = np.convolve(spend_data, weights[::-1], mode='full')[:len(spend_data)]
-    return adstocked_spend
-
-def delayed_adstock(media, alpha=0.8, theta=2, L=5):
-    weights = _delayed_adstock(alpha, theta, L)
-    media_transformed = media.copy()
-    for channel in CHANNEL_PRIORS.keys():
-        media_transformed[channel] = _apply_delayed_adstock(media[channel], weights)
-    return media_transformed
-
-
-def load_media():
-    media = pd.read_csv('data/MMM_test_data.csv', )
-    media["start_of_week"] = pd.to_datetime(media["start_of_week"], format="%d-%m-%y")
-    # 24-07-22
-    media.sort_values(by="start_of_week", inplace=True)
-    media.reset_index(drop=True, inplace=True)
-    return media
-
-def plot_media(media):
-    return media.plot(x='start_of_week', title='MMM test data transformed', legend=True)
-
-def plot_prior_predictive(mmm, media):
+def prior_predictive(mmm):
     with mmm:
         prior_samples = pm.sample_prior_predictive(100)
-        
-    observed = media['revenue'] / media['revenue'].mean()
     predicted = prior_samples.prior_predictive["revenue"].mean(axis=1)[0]
+    return predicted
 
-    dates = media['start_of_week']
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(observed, label='Observed')
-    plt.plot(predicted, label='Predicted')
-    plt.xticks(np.arange(0, len(dates), 10), dates.dt.date[::10], rotation=45)
-    plt.ylabel('Revenue')
-    plt.title('Observed vs Predicted')
-    plt.legend()
-    plt.show()
-
-def plot_posterior(mmm, media, channel_priors=CHANNEL_PRIORS):
+def posterior_predictive(mmm):
     with mmm:
-        trace = pm.sample(tune=2000)
+        trace = pm.sample(tune=2000, idata_kwargs={"log_likelihood": True})
     
     posterior = pm.sample_posterior_predictive(trace, mmm)
-    predictions = posterior['posterior_predictive']['revenue'].mean(axis=0).mean(axis=0) * media['revenue'].mean()
+    predictions = posterior['posterior_predictive']['revenue'].mean(axis=0).mean(axis=0)
+    return trace, predictions
 
-    dates = media['start_of_week']
-
-    # media_decomp = pd.DataFrame({i:np.array(trace['posterior']["contribution_"+str(i)]).mean(axis=(0,1)) for i in channel_priors.keys()}, index=dates) * media['revenue'].mean()
-
-    plt.plot(media['revenue'])
-    plt.plot(predictions)
-    # xticks 
-    plt.xticks(np.arange(0, len(dates), 10), dates.dt.date[::10], rotation=45)
-    plt.title("Model Fit")
-    
-    plt.show()
-
-    summary = az.summary(trace, round_to=2)
-    return summary

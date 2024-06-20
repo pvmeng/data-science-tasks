@@ -1,3 +1,10 @@
 .venv
 __pycache__/
 data
+
+*.aux
+*.log
+*.out
+*.pdf
+
+report/img

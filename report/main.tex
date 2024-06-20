@@ -1,0 +1,293 @@
+\documentclass{article}
+
+\usepackage{graphicx} % For including images
+\usepackage{amsmath}  % For mathematical equations
+\usepackage{hyperref} % For hyperlinks
+\usepackage{booktabs} % For tables
+\usepackage{placeins} % for the \FloatBarrier command
+\usepackage{geometry} % for custom margins
+\usepackage{float} % for improved float handling
+\usepackage{array} % for table column specifications
+\usepackage{ragged2e} % for raggedright command
+
+% Set custom margins
+\geometry{
+    left=1in,    % Adjust left margin
+    right=1in,   % Adjust right margin
+    top=1in,     % Adjust top margin (optional)
+    bottom=1in   % Adjust bottom margin (optional)
+}
+
+\renewcommand{\arraystretch}{1.5} % Increase vertical space between lines
+
+\title{Haensel AMS Job Application Task: Mixed Marketing Model}
+\author{Applicant: \textbf{Philipp von Mengersen}}
+
+
+\begin{document}
+
+\maketitle
+
+\small
+
+
+% - explain the components
+%     - media contributions
+%     - adstock effect
+%     - trend+season+blackfriday
+% - explain priors
+
+% - how to measure the performance of the model? 
+%     - train und test split?   N0
+%     - loo likelihood and arviz compare
+%     - https://www.pymc.io/projects/docs/en/stable/learn/core_notebooks/model_comparison.html
+%     - create baseline model
+% - compare priors vs posterior
+
+% - channel analysis / ROI
+%     - add channel_coeffs to bar plot
+
+% - Discussion model / Improvements
+
+
+\section{Model}
+In the provided dataset we can find sales and channel spend timeseries data for 2 years. 
+In order to understand, how the marketing actions impact the sales company X's online shop, we have to associate the channel spend with the sales series.
+Therefore I created two different models:
+\begin{itemize}
+    \item  The first model serves as our baseline model, It is a simple multivariate bayesian regression model, 
+    that only considers the direct impact of the weekly ad-spendings on the sales, without any additional effects.
+    \item The second models incorporates some additional features, that are known to have an impact on the sales:
+    (i) The adstock effect, which models the delayed impact of the ads on the sales.
+    (ii) The trend, seasonality and the blackfriday, which are known to have an impact on the sales.
+\end{itemize}
+
+The basis is an additive model, that means I identify multiple components of the observed variable (here: sales) and then add these together.
+In the following I will explain the components of the model in more detail:
+
+\subsection{Media Contributions}
+
+The media contributions follow this schema:
+\[
+    \text{sales} \sim \mathcal{N}\left(\sum_{i=1}^{N} \beta_i \cdot \mathrm{channel\_spend}_i, \sigma\right)
+\]
+with $\beta_i \sim \text{TruncatedNormal}(\mu_i, 0.1, 0, 0.5)$ and $\sigma \sim \text{Uniform}(0, 0.5)$
+
+\subsection{Adstock Effect}
+
+\noindent
+The adstock effect with the \(\alpha\) and \(\theta\) parameters is calculated using weights that decay according to both parameters. The weights for period \( k \) are given by:
+
+\[
+w_k = \alpha^{(k - \theta)^2}
+\]
+
+These weights are normalized by dividing each by the sum of all weights to ensure they sum to 1:
+
+\[
+\tilde{w}_k = \frac{w_k}{\sum_{j=0}^{L-1} w_j} = \frac{\alpha^{(k - \theta)^2}}{\sum_{j=0}^{L-1} \alpha^{(j - \theta)^2}}
+\]
+
+The adstocked spend at time \( t \) is then obtained by convolving the advertising spend \( \text{Spend}_t \) with these normalized weights:
+
+\[
+\mathrm{Adstock}_t = \sum_{k=0}^{L-1} \tilde{w}_k \cdot \text{Spend}_{t-k}
+\]
+
+This formula captures the weighted effect of advertising spend over time, incorporating both decay and a shift controlled by the parameters \( \alpha \) and \(\theta\).
+
+\subsection{Trend + Season + Blackfriday}
+
+\subsubsection{Trend}
+
+\noindent
+To model the trend over time, we employ a logistic curve, which is a commonly used function for representing growth processes that start slowly, accelerate, and then decelerate as they approach an asymptote. The logistic curve is defined as follows:
+
+\[
+f(t) = \frac{L}{1 + \exp(-k \cdot (t - t_0))}
+\]
+
+% In this equation, \( f(t) \) represents the trend value at time \( t \), and the parameters are:
+% \begin{itemize}
+%     \item \( L \): The carrying capacity or the maximum value that the curve can reach.
+%     \item \( k \): The growth rate, which determines how steeply the curve approaches the carrying capacity.
+%     \item \( t_0 \): The inflection point, which is the time at which the curve reaches half of its maximum value \( L \), marking the transition from acceleration to deceleration in the growth rate.
+% \end{itemize}
+
+
+\subsubsection{Seasonality}
+
+\noindent
+To model seasonality in time series data, we use a cyclic component that captures the periodic fluctuations inherent in the data. This component can be expressed as a combination of sine and cosine functions, which allows for the representation of seasonal patterns. The cyclic component is defined as follows:
+
+\[
+g(t) = a_0 + a_1 \cos\left(\frac{2 \pi t}{\text{period}}\right) + b_1 \sin\left(\frac{2 \pi t}{\text{period}}\right)
+\]
+
+% In this equation, \( g(t) \) represents the seasonal component at time \( t \), and the parameters are:
+% \begin{itemize}
+%     \item \( a_0 \): The baseline level of the seasonal component.
+%     \item \( a_1 \): The amplitude of the cosine term, which captures the seasonal effect that peaks periodically.
+%     \item \( b_1 \): The amplitude of the sine term, which captures the seasonal effect that shifts the peak within each period.
+%     \item \(\text{period}\): The length of the cycle or season, representing the interval over which the seasonal pattern repeats. By default, this is set to 20, but it can be adjusted according to the specific periodicity of the data.
+% \end{itemize}
+
+\subsubsection{Black Friday}
+\noindent
+The contribution of Black Friday to the overall analysis is modeled by multiplying this binary indicator by a coefficient and the corresponding data value at each time point. Mathematically, the contribution \( \mathrm{BF\_Contrib}_t \) at time \( t \) is given by:
+$\mathrm{BF\_Contrib}_t = \mathrm{BlackFriday}(t) \cdot \beta_{\mathrm{BF}} \cdot \text{Data}_t$ and the indicator function is defined as:
+\[
+\mathrm{BlackFriday}(t) = 
+\begin{cases} 
+1 & \text{if } t \mod \text{period} = \text{offset} \\ 
+0 & \text{otherwise} 
+\end{cases}
+\]
+
+
+\begin{figure}[H]
+    \centering
+    \begin{minipage}[t]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{img/original_data.png}
+        \caption{Original Data}
+        \label{fig:original_data}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{img/trend+season+bf.png}
+        \caption{Trend + Season + Black Friday}
+        \label{fig:trend_season_bf}
+    \end{minipage}
+\end{figure}
+
+
+
+\subsection{Prediction Analysis}
+
+In the Prediction Analysis Section, we can see the prior and posterior predictions of the baseline and the mmm model.
+For the priors, I decided on the following values. Since no label for the spend channel was given, I assumed the same initial prior contribution, lag and decay for all channels
+and wrapped in the same distributions. The prior and posterior predictions are shown in the figures Prior Predictions and Posterior Predictions.
+
+\begin{table}[H]
+    \small
+    \centering
+    \begin{tabular}{>{\raggedright}p{3cm} >{\raggedright}p{6cm} >{\raggedright\arraybackslash}p{6cm}}
+        \toprule
+        \textbf{Variable} & \textbf{Description} & \textbf{Distribution and Parameters} \\
+        \midrule
+        L & describes period length of adstock impact & constant values = 5 \\
+        $\alpha_{channel}$ & Adstock decay parameter for each channel & $\alpha_{channel} \sim \mathcal{U}(0.3, 0.9)$ \\
+        $\theta_{channel}$ & Adstock delay parameter for each channel & $\theta_{channel} \sim \text{DiscreteUniform}(0, L-1)$ \\
+        $\text{weights}_{channel}$ & Weights for adstock effect & $\text{weights}_{channel} = \alpha_{channel}^{(\text{range}(L) - \theta_{channel})^2}$ \\
+        $\mu_{\text{channel}}$ & Mean contribution coefficient for each channel & inital value is constant = 0.05 for all channels \\
+        $\text{coefficient}_{channel}$ & Contribution coefficient for each channel & $\text{coefficient}_{channel} \sim \text{TruncatedNormal}(\mu_{\text{channel}}, 0.1, 0, 0.5)$ \\
+        $\text{capacity\_coef}$ & Coefficient for logistic growth capacity & $\text{capacity\_coef} \sim \mathcal{N}(1.2, 0.3)$ \\
+        $\text{growth\_rate}$ & Growth rate for logistic trend & $\text{growth\_rate} \sim \text{TruncatedNormal}(-0.02, 0.1, -0.15, 0.0)$ \\
+        $\text{cos\_coef}$ & Coefficient for cosine component & $\text{cos\_coef} \sim \mathcal{N}(-1, 0.3)$ \\
+        $\text{sin\_coef}$ & Coefficient for sine component & $\text{sin\_coef} \sim \mathcal{N}(2, 0.3)$ \\
+        $\text{year\_coeff}$ & Scaling coefficient for yearly component & $\text{year\_coeff} \sim \mathcal{N}(0.1, 0.05)$ \\
+        $\text{black\_friday\_coef}$ & Coefficient for Black Friday effect & $\text{black\_friday\_coef} \sim \mathcal{N}(1, 0.2)$ \\
+        $\sigma$ & Standard deviation of revenue & $\sigma \sim \mathcal{U}(0, 0.5)$ \\
+        \bottomrule
+    \end{tabular}
+    \caption{Summary of Model Variables and Their Distributions}
+    \label{tab:model_variables}
+\end{table}
+
+
+\begin{figure}[H] % Use [H] to enforce exact placement (requires float package)
+    \centering
+    \begin{minipage}[t]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{img/Prior_Predictions.png}
+        \caption{Prior Predictions}
+        \label{fig:prior_predictions}
+    \end{minipage}
+    \hfill % Use \hfill to automatically adjust the space
+    \begin{minipage}[t]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{img/Posterior_Predictions.png}
+        \caption{Posterior Predictions}
+        \label{fig:posterior_predictions}
+    \end{minipage}
+\end{figure}
+
+\subsection{Model Performance}
+
+As we can see in the table Model Performance, the mmm model performs worse in the prior, but becomes better in posterior (regarding the mean squared error).
+Also by comparing the loo likelihoods with the arviz compare function, we can see that the mmm model is better than the baseline model.
+\begin{table}[h!]
+    \small
+    \centering
+    \begin{minipage}[t]{0.3\textwidth}
+        \centering
+        \begin{tabular}{lcc}
+        \toprule
+        \textbf{Model} & \textbf{MSE} \\
+        \midrule
+        baseline prior   & 0.20 \\
+        baseline posterior   & 0.31 \\
+        mmm prior  & 0.10 \\
+        mmm posterior  & \textbf{0.06} \\
+        \bottomrule
+        \end{tabular}
+        \caption{Model Performance}
+        \label{tab:model_performance}
+    \end{minipage}
+    \hfill % Use \hfill to automatically adjust the space
+    \begin{minipage}[t]{0.65\textwidth}
+        \centering
+        \begin{tabular}{lrrrrrrr}
+            \toprule
+            & \textbf{rank} & \textbf{elpd\_loo} & \textbf{p\_loo} & \textbf{elpd\_diff} & \textbf{Weight} & \textbf{SE} \\
+            \midrule
+            mmm & 0 & -7.86 & 11.00 & 0.00 & 0.88 & 10.52 \\
+            baseline & 1 & -34.47 & 10.28 & 26.60 & 0.12 & 13.33 \\
+            \bottomrule
+        \end{tabular}
+        \caption{LOO Arviz Comparison (posterior)}
+        \label{tab:loo_arviz_comparison}
+    \end{minipage}
+\end{table}
+
+
+\section{Channel Spend Analysis}
+Now that we have a model that fits the data, we can analize the impact of the individual channels on the sales.
+On the one side we can see how much each channel contributes to the sales, and on the other side we can see the ROI of each channel.
+The ROI is given by the ratio of the sales to the channel spend.
+
+We can see that channel 2 has an outstanding ROI. Since the model contains some bias, we probably should not take the ROI values too seriously, 
+but we can see that the channel 2 has a much higher ROI than the other channels.
+In the second table, we can observe the other channels without channel 2 with a better scaling.
+Interesting here is, that channel 7 has the highest contribution, but the ROI is the lowest.
+
+
+\noindent
+\begin{figure}[H]
+    \centering
+    \begin{minipage}[t]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{img/Channel_Contribution_and_ROI.png}
+        \caption{Channel Spend Analysis}
+        \label{fig:channel_contribution_roi}
+    \end{minipage}
+    \hfill % Use \hfill to automatically adjust the space
+    \begin{minipage}[t]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{img/Channel_contribution_without_channel_2.png}
+        \caption{Channel Spend Analysis (Without Channel 2)}
+        \label{fig:channel_contribution_no_channel_2}
+    \end{minipage}
+\end{figure}
+
+
+
+\section{Discussion}
+As we can see in the Prediction Analysis Section, the model does not properly fit the data and still many adaption are to be made. 
+Part of this work, was to show which basic effect can be considered in a model and how to implement them in a bayesian framework.
+
+With ongoing improvement of the model, it be possible to generate more accurate predictions and to better understand the impact of the marketing actions on the sales.
+
+\end{document}
