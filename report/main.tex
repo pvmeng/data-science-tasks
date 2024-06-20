@@ -57,7 +57,7 @@ Therefore I created two different models:
 \begin{itemize}
     \item  The first model serves as our baseline model, It is a simple multivariate bayesian regression model, 
     that only considers the direct impact of the weekly ad-spendings on the sales, without any additional effects.
-    \item The second models incorporates some additional features, that are known to have an impact on the sales:
+    \item The second model (called mmm) incorporates some additional features, that are known to have an impact on the sales:
     (i) The adstock effect, which models the delayed impact of the ads on the sales.
     (ii) The trend, seasonality and the blackfriday, which are known to have an impact on the sales.
 \end{itemize}
@@ -71,7 +71,7 @@ The media contributions follow this schema:
 \[
     \text{sales} \sim \mathcal{N}\left(\sum_{i=1}^{N} \beta_i \cdot \mathrm{channel\_spend}_i, \sigma\right)
 \]
-with $\beta_i \sim \text{TruncatedNormal}(\mu_i, 0.1, 0, 0.5)$ and $\sigma \sim \text{Uniform}(0, 0.5)$
+with $\beta_i \sim \text{TruncatedNormal}(\mu_i, 0.1, 0, 0.5)$\footnote{the last two parameter of truncated normal are the lower and higher bound} and $\sigma \sim \text{Uniform}(0, 0.5)$.
 
 \subsection{Adstock Effect}
 
@@ -101,10 +101,10 @@ This formula captures the weighted effect of advertising spend over time, incorp
 \subsubsection{Trend}
 
 \noindent
-To model the trend over time, we employ a logistic curve, which is a commonly used function for representing growth processes that start slowly, accelerate, and then decelerate as they approach an asymptote. The logistic curve is defined as follows:
+To model the trend over time, we employ a logistic curve, which is a commonly used function for representing (negative) growth processes that start slowly, accelerate, and then decelerate as they approach an asymptote. The logistic curve is defined as follows:\footnote{for more details regarding the individual parameters, please refer to the notebook}
 
 \[
-f(t) = \frac{L}{1 + \exp(-k \cdot (t - t_0))}
+f(t) = \frac{capacity}{1 + \exp(-k \cdot (t - t_0))}
 \]
 
 % In this equation, \( f(t) \) represents the trend value at time \( t \), and the parameters are:
@@ -119,6 +119,7 @@ f(t) = \frac{L}{1 + \exp(-k \cdot (t - t_0))}
 
 \noindent
 To model seasonality in time series data, we use a cyclic component that captures the periodic fluctuations inherent in the data. This component can be expressed as a combination of sine and cosine functions, which allows for the representation of seasonal patterns. The cyclic component is defined as follows:
+(with period = 52)
 
 \[
 g(t) = a_0 + a_1 \cos\left(\frac{2 \pi t}{\text{period}}\right) + b_1 \sin\left(\frac{2 \pi t}{\text{period}}\right)
@@ -135,7 +136,7 @@ g(t) = a_0 + a_1 \cos\left(\frac{2 \pi t}{\text{period}}\right) + b_1 \sin\left(
 \subsubsection{Black Friday}
 \noindent
 The contribution of Black Friday to the overall analysis is modeled by multiplying this binary indicator by a coefficient and the corresponding data value at each time point. Mathematically, the contribution \( \mathrm{BF\_Contrib}_t \) at time \( t \) is given by:
-$\mathrm{BF\_Contrib}_t = \mathrm{BlackFriday}(t) \cdot \beta_{\mathrm{BF}} \cdot \text{Data}_t$ and the indicator function is defined as:
+$\mathrm{BF\_Contrib}_t = \mathrm{BlackFriday}(t) \cdot \beta_{\mathrm{BF}} \cdot (\text{trend}_t+\text{cycle}_t)$ and the indicator function is defined as:
 \[
 \mathrm{BlackFriday}(t) = 
 \begin{cases} 
@@ -166,9 +167,9 @@ $\mathrm{BF\_Contrib}_t = \mathrm{BlackFriday}(t) \cdot \beta_{\mathrm{BF}} \cdo
 
 \subsection{Prediction Analysis}
 
-In the Prediction Analysis Section, we can see the prior and posterior predictions of the baseline and the mmm model.
+In the Prediction Analysis Figures, we can see the prior and posterior predictions of the baseline and the mmm model.
 For the priors, I decided on the following values. Since no label for the spend channel was given, I assumed the same initial prior contribution, lag and decay for all channels
-and wrapped in the same distributions. The prior and posterior predictions are shown in the figures Prior Predictions and Posterior Predictions.
+and wrapped in the same distributions. The prior and posterior predictions are shown in the figures Prior Predictions and Posterior Predictions. All the values have been choosen by thinking of a plausible range for the parameters. This was an experimental process, in which I tried to find meaningful values, that represent some real aspect, rather than forceful pushing them to fit the data.
 
 \begin{table}[H]
     \small
@@ -189,7 +190,7 @@ and wrapped in the same distributions. The prior and posterior predictions are s
         $\text{sin\_coef}$ & Coefficient for sine component & $\text{sin\_coef} \sim \mathcal{N}(2, 0.3)$ \\
         $\text{year\_coeff}$ & Scaling coefficient for yearly component & $\text{year\_coeff} \sim \mathcal{N}(0.1, 0.05)$ \\
         $\text{black\_friday\_coef}$ & Coefficient for Black Friday effect & $\text{black\_friday\_coef} \sim \mathcal{N}(1, 0.2)$ \\
-        $\sigma$ & Standard deviation of revenue & $\sigma \sim \mathcal{U}(0, 0.5)$ \\
+        $\sigma$ & Standard deviation of sales (observed variable) & $\sigma \sim \mathcal{U}(0, 0.5)$ \\
         \bottomrule
     \end{tabular}
     \caption{Summary of Model Variables and Their Distributions}
