@@ -219,10 +219,11 @@ and wrapped in the same distributions. The prior and posterior predictions are s
 As we can see in the table Model Performance, the mmm model performs worse in the prior, but becomes better in posterior (regarding the mean squared error).
 Also by comparing the loo likelihoods with the arviz compare function, we can see that the mmm model is better than the baseline model. 
 (The resuls presented here can slightly differ from the one on the notebook)
-\begin{table}[h!]
-    \small
+\begin{table}[H]
+    
     \centering
     \begin{minipage}[t]{0.3\textwidth}
+        \small
         \centering
         \begin{tabular}{lcc}
         \toprule
@@ -239,6 +240,7 @@ Also by comparing the loo likelihoods with the arviz compare function, we can se
     \end{minipage}
     \hfill % Use \hfill to automatically adjust the space
     \begin{minipage}[t]{0.65\textwidth}
+        \small
         \centering
         \begin{tabular}{lrrrrrrr}
             \toprule
@@ -264,6 +266,13 @@ but we can see that the channel 2 has a much higher ROI than the other channels.
 In the second table, we can observe the other channels without channel 2 with a better scaling.
 Interesting here is, that channel 7 has the highest contribution, but the ROI is the lowest.
 
+Now we could argue, that we should invest more in channel 2, since it has the highest ROI, but we should also consider the contribution of the channels.
+Another interesting measure, would be the channel\_spend\_coefficients, since they show how much the sales increase for a 1 unit increase in the channel spend.
+Since there are also other effects we have to consider, like saturation, channel independent phenomena that drive the sales, etc.
+we can not immediately take the ROI as the only measure for the channel spend.
+
+In addition to that, we should also take more advantage of our prior knowledge about the channels, so we get more precise results.
+
 
 \noindent
 \begin{figure}[H]
@@ -287,8 +296,8 @@ Interesting here is, that channel 7 has the highest contribution, but the ROI is
 
 \section{Discussion}
 As we can see in the Prediction Analysis Section, the model does not properly fit the data and still many adaption are to be made. 
-Part of this work, was to show which basic effect can be considered in a model and how to implement them in a bayesian framework.
+Part of this work, was to show which basic effects can be considered in a model and how to implement them in a bayesian framework.
 
-With ongoing improvement of the model, it be possible to generate more accurate predictions and to better understand the impact of the marketing actions on the sales.
+With ongoing improvement of the model, it might be possible to generate more accurate predictions and to better understand the impact of the marketing actions on the sales.
 
 \end{document}
